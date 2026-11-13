@@ -1,0 +1,119 @@
+name: jitsi-meet
+
+x-service: &service
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /run:size=32M,mode=1750,exec
+    - /tmp:size=16M,mode=1777,noexec
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  networks:
+    - meet
+
+x-environment: &environment
+  TZ: ${TZ:-Asia/Ho_Chi_Minh}
+  PUBLIC_URL: ${PUBLIC_URL:?Run scripts/configure.py first}
+  ENABLE_AUTH: "1"
+  AUTH_TYPE: internal
+  ENABLE_GUESTS: "1"
+  ENABLE_RECORDING: "0"
+  ENABLE_TRANSCRIPTIONS: "0"
+  ENABLE_XMPP_WEBSOCKET: "1"
+  ENABLE_IPV6: "0"
+  XMPP_SERVER: xmpp.meet.jitsi
+  XMPP_DOMAIN: meet.jitsi
+  XMPP_AUTH_DOMAIN: auth.meet.jitsi
+  XMPP_GUEST_DOMAIN: guest.meet.jitsi
+  XMPP_MUC_DOMAIN: muc.meet.jitsi
+  XMPP_INTERNAL_MUC_DOMAIN: internal-muc.meet.jitsi
+
+services:
+  web:
+    <<: *service
+    image: ghcr.io/jitsi/web:${JITSI_IMAGE_VERSION:-stable-11248-3}
+    mem_limit: 384m
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-18080}:8000"
+    volumes:
+      - ./data/web:/config:ro
+      - ./data/storage/web:/storage
+      - ./data/tmp/web-load-test:/usr/share/jitsi-meet/load-test
+    environment:
+      <<: *environment
+      DISABLE_HTTPS: "1"
+      ENABLE_HTTP_REDIRECT: "0"
+      ENABLE_LETSENCRYPT: "0"
+      ENABLE_SUBDOMAINS: "0"
+      ENABLE_PREJOIN_PAGE: "1"
+      ENABLE_WELCOME_PAGE: "1"
+      ENABLE_LIVESTREAMING: "0"
+      DISABLE_LOCAL_RECORDING: "1"
+      JVB_PREFER_SCTP: "1"
+      RESOLUTION: "480"
+      RESOLUTION_WIDTH: "854"
+      RESOLUTION_MIN: "180"
+      RESOLUTION_WIDTH_MIN: "320"
+      DESKTOP_SHARING_FRAMERATE_AUTO: "0"
+      DESKTOP_SHARING_FRAMERATE_MAX: "5"
+      NGINX_WORKER_PROCESSES: "1"
+    depends_on:
+      - jicofo
+      - jvb
+
+  prosody:
+    <<: *service
+    image: ghcr.io/jitsi/prosody:${JITSI_IMAGE_VERSION:-stable-11248-3}
+    mem_limit: 256m
+    volumes:
+      - ./data/prosody/config:/config:ro
+      - ./data/prosody/prosody-plugins-custom:/prosody-plugins-custom:ro
+      - ./data/storage/prosody:/var/lib/prosody
+    environment:
+      <<: *environment
+      JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD:?Run scripts/configure.py first}
+      JVB_AUTH_PASSWORD: ${JVB_AUTH_PASSWORD:?Run scripts/configure.py first}
+      ENABLE_LOBBY: "1"
+      LOG_LEVEL: info
+    networks:
+      meet:
+        aliases:
+          - xmpp.meet.jitsi
+
+  jicofo:
+    <<: *service
+    image: ghcr.io/jitsi/jicofo:${JITSI_IMAGE_VERSION:-stable-11248-3}
+    mem_limit: 768m
+    volumes:
+      - ./data/jicofo:/config:ro
+    environment:
+      <<: *environment
+      JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD:?Run scripts/configure.py first}
+      JICOFO_MAX_MEMORY: 512m
+    depends_on:
+      - prosody
+
+  jvb:
+    <<: *service
+    image: ghcr.io/jitsi/jvb:${JITSI_IMAGE_VERSION:-stable-11248-3}
+    mem_limit: 1536m
+    ports:
+      - "10000:10000/udp"
+    volumes:
+      - ./data/jvb:/config:ro
+    environment:
+      <<: *environment
+      JVB_AUTH_PASSWORD: ${JVB_AUTH_PASSWORD:?Run scripts/configure.py first}
+      JVB_ADVERTISE_IPS: ${JVB_ADVERTISE_IPS:?Set the VPS public IPv4 with scripts/configure.py}
+      JVB_ADVERTISE_PRIVATE_CANDIDATES: "0"
+      JVB_PORT: "10000"
+      JVB_DISABLE_STUN: "1"
+      VIDEOBRIDGE_MAX_MEMORY: 1024m
+    depends_on:
+      - prosody
+
+networks:
+  meet:
